@@ -1,4 +1,4 @@
--- Baza danych aplikacji "Skrzypce" (SQLite)
+
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE exercise_types (
@@ -41,7 +41,3 @@ INSERT INTO sessions(name, type_id, duration_s, rating, note, practiced_at) VALU
  ('Gama A-dur, 3 oktawy', 1, 1200, 4, '',                       datetime('now','localtime','-4 days')),
  ('Mozart, Koncert nr 3', 3, 2100, 3, '',                       datetime('now','localtime','-5 days'));
 
--- Przykładowe zapytania użyte w aplikacji:
--- SELECT name, date(practiced_at), duration_s, rating FROM sessions ORDER BY practiced_at DESC LIMIT 5;
--- SELECT SUM(duration_s), AVG(rating) FROM sessions;
--- SELECT date(practiced_at) d, SUM(duration_s) FROM sessions WHERE practiced_at >= date('now','localtime','-6 days') GROUP BY d;
