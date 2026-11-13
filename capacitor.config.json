@@ -1,0 +1,6 @@
+{
+  "appId": "pl.skrzypce.app",
+  "appName": "Skrzypce",
+  "webDir": "www",
+  "server": { "androidScheme": "https" }
+}

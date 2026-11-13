@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="pl"><head><meta charset="utf-8"><title>Skrzypce – tuner i dziennik ćwiczeń</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Skrzypce">
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+html,body{height:100%;margin:0;background:#F2F2F7;font-family:Inter,-apple-system,"SF Pro Text",Helvetica,Arial,sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;-webkit-user-select:none;user-select:none}
+#box{height:100%;display:flex;justify-content:center;align-items:flex-start;overflow:hidden}
+#app{position:relative;width:393px;height:852px;flex:none;transform-origin:top center;background:#F2F2F7}
+svg,#ov{position:absolute;left:0;top:0}
+#ov{width:393px;height:852px;pointer-events:none}
+#ov input,#ov textarea{position:absolute;left:26.5px;width:340px;box-sizing:border-box;border:0;background:transparent;font:17px Inter,-apple-system,Helvetica,Arial,sans-serif;padding:0 16px;outline:0;pointer-events:auto;-webkit-user-select:text;user-select:text;resize:none;color:#000}
+#ov textarea{padding:14px 16px}
+g[data-go],g[data-str],g[data-rate],g[data-act],g[data-open],g[data-pg]{cursor:pointer}
+#ov select{position:absolute;opacity:0;pointer-events:auto;font-size:17px;border:0}
+</style></head><body>
+<div id="box"><div id="app"><svg width="393" height="852" viewBox="0 0 393 852"><g id="bg"></g><g id="dy"></g><g id="st"></g></svg><div id="ov"></div></div></div>
+<script src="sql-asm.js"></script>
+<script>
+const SCHEMA=`-- Baza danych aplikacji "Skrzypce" (SQLite)
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE exercise_types (
+  id   INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE sessions (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  name         TEXT    NOT NULL,
+  type_id      INTEGER NOT NULL REFERENCES exercise_types(id),
+  duration_s   INTEGER NOT NULL CHECK (duration_s > 0),
+  rating       INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  note         TEXT    NOT NULL DEFAULT '',
+  practiced_at TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX idx_sessions_date ON sessions(practiced_at);
+
+CREATE TABLE intonation_samples (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  t_ms       INTEGER NOT NULL,
+  note       TEXT    NOT NULL,
+  cents      REAL    NOT NULL CHECK (cents BETWEEN -50 AND 50)
+);
+CREATE INDEX idx_samples_session ON intonation_samples(session_id);
+
+CREATE VIEW v_session_accuracy AS
+SELECT s.id, s.name, s.practiced_at,
+       ROUND(AVG(ABS(i.cents)), 1) AS avg_error_cents
+FROM sessions s LEFT JOIN intonation_samples i ON i.session_id = s.id
+GROUP BY s.id;
+
+INSERT INTO exercise_types(id, name) VALUES (1,'Gama'), (2,'Etiuda'), (3,'Utwór');
+
+INSERT INTO sessions(name, type_id, duration_s, rating, note, practiced_at) VALUES
+ ('Kreutzer nr 2',        2, 1500, 4, 'Druga pozycja za nisko', datetime('now','localtime')),
+ ('Gama G-dur',           1,  900, 5, '',                       datetime('now','localtime','-1 day')),
+ ('Bach, Partita d-moll', 3, 2400, 3, 'Zwolnić tempo',          datetime('now','localtime','-2 days')),
+ ('Gama A-dur, 3 oktawy', 1, 1200, 4, '',                       datetime('now','localtime','-4 days')),
+ ('Mozart, Koncert nr 3', 3, 2100, 3, '',                       datetime('now','localtime','-5 days'));
+
+-- Przykładowe zapytania użyte w aplikacji:
+-- SELECT name, date(practiced_at), duration_s, rating FROM sessions ORDER BY practiced_at DESC LIMIT 5;
+-- SELECT SUM(duration_s), AVG(rating) FROM sessions;
+-- SELECT date(practiced_at) d, SUM(duration_s) FROM sessions WHERE practiced_at >= date('now','localtime','-6 days') GROUP BY d;
+`;
+const $=i=>document.getElementById(i),NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'],MON=['sty','lut','mar','kwi','maj','cze','lip','sie','wrz','paź','lis','gru'];
+const ACC='#7B1E3A',GR='#8E8E93',LN='#E5E5EA',GRN='#34C759',ORG='#FF9500',RED='#FF3B30',GOLD='#FFCC00',S={G:['G3',196],D:['D4',293.66],A:['A4',440],E:['E5',659.26]};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const T=(x,y,s,z,f='#000',w=400,a='start')=>`<text x="${x}" y="${y}" font-size="${z}" font-weight="${w}" fill="${f}" text-anchor="${a}">${s}</text>`;
+const R=(x,y,w,h,f,rx=0,st='')=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${f}"${st?` stroke="${st}"`:''}/>`;
+const star=(cx,cy,r,f)=>{let p='';for(let k=0;k<10;k++){const a=-Math.PI/2+k*Math.PI/5,d=k%2?r*.4:r;p+=`${(cx+d*Math.cos(a)).toFixed(1)},${(cy+d*Math.sin(a)).toFixed(1)} `}return `<polygon points="${p}" fill="${f}"/>`};
+const stars=(x,cy,r,n,g)=>[0,1,2,3,4].map(i=>star(x+r+i*g,cy,r,i<n?GOLD:LN)).join('');
+const G=(a,b)=>`<g ${a}>${b}</g>`;
+const btn=(y,l,c,to)=>G(`data-go="${to}"`,R(26.5,y,340,56,c,16)+T(196.5,y+34,l,18,'#fff',600,'middle'));
+const ind=(cx,y,c,col,cl,st)=>R(cx-140,y-4,280,8,LN,4)+R(cx-1.5,y-16,3,32,'#000')+`<circle cx="${(cx+c*2.8).toFixed(1)}" cy="${y}" r="14" fill="${col}" stroke="#fff" stroke-width="3"/>`+T(cx-140,y+40,'−50',14,GR,400,'middle')+T(cx,y+40,'0',14,GR,400,'middle')+T(cx+140,y+40,'+50',14,GR,400,'middle')+T(cx,y+106,cl,28,'#000',600,'middle')+T(cx,y+140,st,20,col,600,'middle');
+const circ=(x,c)=>`<circle cx="${x}" cy="795" r="11" fill="none" stroke="${c}" stroke-width="2"/>`,ln=`fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"`;
+const tab=a=>{let s=R(0,769,393,83,'#fff')+R(0,769,393,1,LN);
+ [['Tuner','tuner',65.5],['Historia','historia',196.5],['Statystyki','staty',327.5]].forEach(([n,to,x],i)=>{const c=a==i?ACC:GR;
+  const ic=i==0?circ(x,c)+`<line x1="${x}" y1="795" x2="${x+6}" y2="788" stroke="${c}" ${ln}/>`:i==1?circ(x,c)+`<polyline points="${x},789 ${x},795 ${x+5},798" stroke="${c}" ${ln}/>`:R(x-10,797,5,8,c,1)+R(x-2.5,790,5,15,c,1)+R(x+5,794,5,11,c,1);
+  s+=G(`data-go="${to}"`,ic+T(x,825,n,11,c,a==i?600:500,'middle')+R(x-65,769,131,83,'transparent'))});return s};
+const sb=()=>innerWidth>500?T(36,34,'9:41',16,'#000',600)+R(334,22,25,12,'none',3,'#000')+R(336,24,19,8,'#000',1.5):'';
+const mmss=s=>String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const SC=[['G-dur',55,0],['D-dur',62,0],['A-dur',57,0],['E-dur',64,0],['C-dur',60,0],['F-dur',65,0],['B-dur',58,0],['g-moll',55,1],['d-moll',62,1],['a-moll',57,1],['e-moll',64,1],['c-moll',60,1]],IV=[[0,2,4,5,7,9,11,12],[0,2,3,5,7,8,10,12]],NF=['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
+let db,scr='tuner',str='A',note='A4',fr=440,live=false,fresh=false,demo=false,mic=false,starting=false,secs=0,t0=0,rating=4,sci=0,exName='Gama G-dur',samp=[],res={},acc=[],accT=0,curM=null,rec=false,ac,an,buf,lastT=0,lt=0,openId=0,hp=0;
+const devc=(f,t)=>1200*Math.log2(f/t),fq=m=>440*2**((m-69)/12),mn=m=>(/^(F-|B-|[cdg]-)/.test(SC[sci][0])?NF:NAMES)[(m%12+12)%12]+(Math.floor(m/12)-1);
+const wrap=(t,n)=>{const o=[];let l='';for(const w of t.split(' ')){if((l+' '+w).trim().length>n&&l){o.push(l);l=w}else l=(l+' '+w).trim()}o.push(l);return o};
+const pcs=()=>{const[,r,m]=SC[sci];return IV[m].slice(0,7).map(i=>r+i)},inn=m=>pcs().some(p=>(p-m)%12==0),nn=f=>Math.round(69+12*Math.log2(f/440));
+function setSeq(){exName='Gama '+SC[sci][0];res={};acc=[];samp=[];curM=null;rec=false}
+const cc=d=>Math.abs(d)<=8?[GRN,'OK']:d<0?[RED,'Za nisko']:[ORG,'Za wysoko'],sg=d=>(d<0?'−':'+')+Math.abs(Math.round(d))+' cent',mins=x=>Math.max(1,Math.round(x/60));
+const Z={n:'',t:'',note:''};
+const q=(sql,p=[])=>{const s=db.prepare(sql);s.bind(p);const r=[];while(s.step())r.push(s.getAsObject());s.free();return r};
+const save=()=>{try{const u=db.export();let b='';for(let i=0;i<u.length;i+=8192)b+=String.fromCharCode.apply(null,u.subarray(i,i+8192));localStorage.setItem('skrzypce_db',btoa(b))}catch(e){}};
+const typeOf=n=>/gam/i.test(n)?1:/kreutzer|etiud|sevc|ševč|dont|rode/i.test(n)?2:3;
+
+function dyn(){let s='',col=GR,cl='— cent',st=mic||demo?'Zagraj strunę':'Dotknij, by włączyć mikrofon',c=0;
+ if(scr=='tuner'){let k=str;if(live){k=Object.keys(S).reduce((a,b)=>Math.abs(devc(fr,S[b][1]))<Math.abs(devc(fr,S[a][1]))?b:a);const d=devc(fr,S[k][1]);c=Math.max(-50,Math.min(50,d));[col,st]=cc(d);cl=sg(d)}
+  s+='GDAE'.split('').map((l,i)=>{const x=60+i*66,on=l==k;return R(x,92,56,34,on?ACC:'#fff',17,on?'':LN)+T(x+28,115,l,16,on?'#fff':'#000',600,'middle')}).join('');
+  s+=T(196.5,330,S[k][0],96,'#000',700,'middle')+T(196.5,372,Math.round(S[k][1])+' Hz',20,GR,400,'middle')+ind(196.5,474,c,col,cl,st)}
+ if(scr=='sesja'){const ps=pcs();let tg=null,hl='';
+  if(live){const m=nn(fr),d=devc(fr,fq(m));if(inn(m)){tg=m;c=d;[col,st]=cc(d);cl=sg(d);hl=fq(m).toFixed(1)+' Hz · grasz '+fr.toFixed(1)+' Hz'}else st='Poza gamą ('+note+')'}
+  else st='Zagraj dowolną nutę z gamy';
+  s+=ps.map((p,j)=>{const x=20+353/7*(j+.5),v=res[p%12],cur=tg!==null&&(tg-p)%12==0;return `<circle cx="${x.toFixed(1)}" cy="168" r="17" fill="${v===undefined?'#fff':Math.abs(v)<=8?GRN:Math.abs(v)<=20?ORG:RED}" stroke="${cur?ACC:LN}" stroke-width="${cur?3:1}"/>`+T(x.toFixed(1),173,mn(p).replace(/\d+/,''),13,v===undefined?'#000':'#fff',600,'middle')}).join('');
+  s+=T(196.5,110,esc(exName)+' ▾',22,'#000',600,'middle')+T(196.5,136,'Sesja ćwiczenia',14,GR,400,'middle')+T(196.5,250,mmss(secs),72,'#000',700,'middle')+T(196.5,296,'Wykryta nuta',14,GR,400,'middle')+T(196.5,340,tg!==null?mn(tg):live?note:'—',48,'#000',700,'middle')+T(196.5,368,hl,16,GR,400,'middle')+ind(196.5,474,c,col,cl,st)}
+ return s}
+
+function stat(){let s=sb();const d=demo?T(373,76,'tryb demo',12,GR,400,'end'):'';
+ if(scr=='tuner')s+=T(20,76,'Tuner',13,GR,500)+d+'GDAE'.split('').map((l,i)=>G(`data-str="${l}"`,R(60+i*66,92,56,34,'transparent'))).join('')+btn(680,'Zacznij ćwiczenie',ACC,'sesja')+tab(0);
+ if(scr=='sesja')s+=d+btn(680,'Zakończ',RED,'zapis');
+ if(scr=='zapis'){s+=T(26.5,110,'Zapisz ćwiczenie',28,'#000',700);
+  [['Nazwa',160,52],['Czas',252,52],['Notatka',444,120]].forEach(([l,y,h])=>s+=T(30,y,l,13,GR,500)+R(26.5,y+12,340,h,'#fff',12,'#D1D1D6'));
+  s+=T(30,344,'Ocena',13,GR,500)+stars(30,396,18,rating,46)+[0,1,2,3,4].map(i=>G(`data-rate="${i+1}"`,R(30+i*46,378,36,36,'transparent'))).join('')+btn(680,'Zapisz',ACC,'save')}
+ if(scr=='historia'){s+=T(20,110,'Historia',34,'#000',700);
+  const tot=q('SELECT COUNT(*) n FROM sessions')[0].n;hp=Math.max(0,Math.min(hp,Math.ceil(tot/5)-1));
+  const rows=q("SELECT id,name,date(practiced_at) d,duration_s,rating FROM sessions ORDER BY practiced_at DESC,id DESC LIMIT 5 OFFSET ?",[hp*5]);
+  rows.forEach((r,i)=>{const y=140+i*96,n=r.name.length>22?r.name.slice(0,21)+'…':r.name;
+   s+=G(`data-open="${r.id}"`,R(20,y,353,80,'#fff',16,LN)+T(40,y+34,esc(n),18,'#000',600)+T(40,y+58,(+r.d.slice(8))+' '+MON[+r.d.slice(5,7)-1]+' · '+mins(r.duration_s)+' min',14,GR)+stars(280,y+40,8,r.rating,18))});
+  if(!rows.length)s+=T(196.5,300,'Brak ćwiczeń',17,GR,400,'middle');
+  if(hp>0)s+=G('data-pg="-1"',T(40,712,'‹ Nowsze',16,ACC,500)+R(20,690,120,36,'transparent'));
+  if((hp+1)*5<tot)s+=G('data-pg="1"',T(353,712,'Starsze ›',16,ACC,500,'end')+R(253,690,120,36,'transparent'));
+  s+=tab(1)}
+ if(scr=='det'){const r=q('SELECT s.*,t.name tn FROM sessions s JOIN exercise_types t ON t.id=s.type_id WHERE s.id=?',[openId])[0];
+  s+=G('data-go="historia"',T(20,76,'‹ Historia',17,ACC,500)+R(0,52,140,36,'transparent'));
+  if(r){const tl=wrap(r.name,22).slice(0,2),pa=r.practiced_at;let y=118+(tl.length-1)*34;
+   s+=tl.map((l,i)=>T(20,118+i*34,esc(l),28,'#000',700)).join('')+T(20,y+28,(+pa.slice(8,10))+' '+MON[+pa.slice(5,7)-1]+' '+pa.slice(0,4)+' · '+mins(r.duration_s)+' min · '+r.tn,14,GR)+stars(20,y+56,12,r.rating,30);
+   y+=96;const has=r.note.trim(),nl=has?r.note.split('\n').flatMap(l=>wrap(l,36)).slice(0,6):['Brak opisu'],h=24+nl.length*22;
+   s+=T(24,y,'Opis',13,GR,500)+R(20,y+10,353,h,'#fff',16,LN)+nl.map((l,i)=>T(36,y+40+i*22,esc(l),16,has?'#000':GR)).join('');y+=h+44;
+   const sm=q('SELECT note,cents FROM intonation_samples WHERE session_id=? ORDER BY t_ms',[openId]);
+   if(sm.length){const w=333/sm.length;s+=T(24,y,'Intonacja (centy od właściwej nuty)',13,GR,500)+R(20,y+10,353,150,'#fff',16,LN)+R(30,y+80,333,1,LN);
+    sm.forEach((m,i)=>{const hh=m.cents*1.2,cx=30+w*(i+.5);s+=R(cx-5,hh>=0?y+80-hh:y+80,10,Math.max(2,Math.abs(hh)),Math.abs(m.cents)<=8?GRN:Math.abs(m.cents)<=20?ORG:RED,3)+T(cx,y+148,m.note,9,GR,400,'middle')})}
+   s+=G('data-act="del"',T(196.5,745,'Usuń ćwiczenie',16,RED,500,'middle')+R(100,722,193,36,'transparent'))}
+  s+=tab(1)}
+ if(scr=='staty'){s+=T(20,110,'Statystyki',34,'#000',700);
+  const t=q('SELECT COALESCE(SUM(duration_s),0) t,COALESCE(AVG(rating),0) a FROM sessions')[0],per={};
+  q("SELECT date(practiced_at) d,SUM(duration_s) t FROM sessions WHERE practiced_at>=date('now','localtime','-6 days') GROUP BY d").forEach(r=>per[r.d]=r.t);
+  const days=[...Array(7)].map((_,i)=>{const x=new Date();x.setDate(x.getDate()-6+i);return[iso(x),'NPWŚCPS'[x.getDay()]]}),mx=Math.max(1,...days.map(([x])=>per[x]||0));
+  s+=R(20,140,165,90,'#fff',16,LN)+T(36,182,Math.floor(t.t/3600)+' h '+Math.round(t.t%3600/60)+' min',26,'#000',700)+T(36,208,'Łączny czas',14,GR)
+   +R(208,140,165,90,'#fff',16,LN)+T(224,182,t.a.toFixed(1).replace('.',','),26,'#000',700)+T(224,208,'Średnia ocena',14,GR)
+   +R(20,250,353,260,'#fff',16,LN)+T(40,284,'Ostatnie 7 dni',16,'#000',600);
+  days.forEach(([x,l],i)=>{const v=per[x]||0,h=v?Math.max(8,v/mx*150):4,bx=40+i*44.5;s+=R(bx,470-h,28,h,v?ACC:LN,6)+T(bx+14,494,l,13,GR,400,'middle')});s+=tab(2)}
+ return s}
+
+function render(){$('bg').innerHTML=R(0,0,393,852,'#F2F2F7');$('st').innerHTML=stat();$('dy').innerHTML=dyn();
+ $('ov').innerHTML=scr=='zapis'?`<input style="top:172px;height:52px" value="${esc(Z.n)}" oninput="Z.n=this.value"><input style="top:264px;height:52px" value="${esc(Z.t)}" oninput="Z.t=this.value"><textarea style="top:456px;height:120px" oninput="Z.note=this.value">${esc(Z.note)}</textarea>`:scr=='sesja'?`<select style="top:88px;left:60px;width:273px;height:52px" onchange="sci=+this.value;setSeq()">${SC.map((x,i)=>`<option value="${i}"${i==sci?' selected':''}>Gama ${x[0]}`).join('')}</select>`:''}
+function go(to){if(to=='sesja'){t0=Date.now();secs=0;setSeq()}
+ if(to=='zapis'){const k=samp.length;Z.n=exName;Z.t=mmss(secs);Z.note=k?`Zagrane nuty: ${k}, czysto (do 8 centów): ${samp.filter(x=>Math.abs(x[2])<=8).length}. Średni błąd: ${Math.round(samp.reduce((a,b)=>a+Math.abs(b[2]),0)/k)} centów.`:'';rating=4}
+ scr=to;render()}
+function saveSes(){try{const m=/^(\d+):(\d{1,2})$/.exec(Z.t.trim()),sec=Math.max(1,m?+m[1]*60+ +m[2]:(parseInt(Z.t)||1)*60),nm=Z.n.trim()||'Ćwiczenie';
+ db.run('INSERT INTO sessions(name,type_id,duration_s,rating,note) VALUES(?,?,?,?,?)',[nm,typeOf(nm),sec,rating,Z.note]);
+ const id=q('SELECT last_insert_rowid() id')[0].id;samp.forEach(x=>db.run('INSERT INTO intonation_samples(session_id,t_ms,note,cents) VALUES(?,?,?,?)',[id,...x]));
+ samp=[];save();hp=0;go('historia')}catch(e){alert('Nie udało się zapisać ćwiczenia')}}
+$('app').addEventListener('click',e=>{startMic();const t=e.target.closest('[data-go],[data-str],[data-rate],[data-act],[data-open],[data-pg]');if(!t)return;const d=t.dataset;
+ if(d.go)d.go=='save'?saveSes():go(d.go);else if(d.str){str=d.str;render()}else if(d.rate){rating=+d.rate;render()}
+ else if(d.open){openId=+d.open;go('det')}else if(d.pg){hp+=+d.pg;render()}
+ else if(d.act=='del'&&confirm('Usunąć to ćwiczenie?')){db.run('DELETE FROM sessions WHERE id=?',[openId]);save();go('historia')}});
+
+async function startMic(){if(mic||demo||starting)return;starting=true;
+ try{const m=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+  ac=new(window.AudioContext||window.webkitAudioContext)();await ac.resume();an=ac.createAnalyser();an.fftSize=4096;ac.createMediaStreamSource(m).connect(an);buf=new Float32Array(4096);mic=true}
+ catch(e){demo=true;render()}starting=false}
+function pitch(b,sr){let e=0;for(let i=0;i<b.length;i++)e+=b[i]*b[i];if(Math.sqrt(e/b.length)<.01)return 0;
+ const n=2048,lo=Math.floor(sr/2800),hi=Math.floor(sr/170),r=new Float32Array(hi+2);let mx=0;
+ for(let l=lo;l<=hi+1;l++){let s=0,p=0;for(let i=0;i<n;i++){s+=b[i]*b[i+l];p+=b[i]*b[i]+b[i+l]*b[i+l]}r[l]=p?2*s/p:0;if(l<=hi&&r[l]>mx)mx=r[l]}
+ if(mx<.8)return 0;
+ for(let l=lo+1;l<=hi;l++)if(r[l]>=.9*mx&&r[l]>r[l-1]&&r[l]>=r[l+1]){const a=r[l-1],c=r[l+1],d=a-2*r[l]+c;return sr/(l+(d?.5*(a-c)/d:0))}
+ return 0}
+function setP(f){const n=Date.now();fresh=f>0;if(fresh){const m=Math.round(69+12*Math.log2(f/440));fr=live&&Math.abs(devc(f,fr))<40?Math.exp(.5*Math.log(fr)+.5*Math.log(f)):f;note=NAMES[(m%12+12)%12]+(Math.floor(m/12)-1);live=true;lastT=n}else if(n-lastT>400)live=false}
+function track(){const now=Date.now();
+ if(fresh){const m=nn(fr);if(!inn(m)){curM=null;return}
+  if(m!=curM){curM=m;acc=[];accT=now;rec=false}acc.push(devc(fr,fq(m)));
+  if(!rec&&now-accT>=350){const a=acc.slice(Math.floor(acc.length/3)),v=a.reduce((x,y)=>x+y,0)/a.length;res[m%12]=v;samp.push([now-t0,mn(m),Math.round(v*10)/10]);rec=true}}
+ else if(now-lastT>250){curM=null;acc=[];rec=false}}
+function tick(n){if(mic){an.getFloatTimeDomainData(buf);setP(pitch(buf,ac.sampleRate))}
+ else if(demo)setP(scr=='sesja'?fq(pcs()[Math.floor(n/1500)%7])*2**(Math.sin(n/250)*18/1200):S[str][1]*2**(Math.sin(n/1400)*38/1200));
+ if(scr=='sesja'){secs=Math.floor((Date.now()-t0)/1000);track()}
+ if((scr=='tuner'||scr=='sesja')&&n-lt>50){lt=n;$('dy').innerHTML=dyn()}requestAnimationFrame(tick)}
+const fit=()=>{const b=$('box');$('app').style.transform=`scale(${Math.min(b.clientWidth/393,b.clientHeight/852)})`};
+addEventListener('resize',fit);fit();
+(async()=>{if(typeof initSqlJs=='undefined'){$('st').innerHTML=T(196.5,400,'Brak połączenia z internetem',17,GR,400,'middle');return}
+ const SQL=await initSqlJs();let u=null;try{const b=localStorage.getItem('skrzypce_db');if(b)u=Uint8Array.from(atob(b),c=>c.charCodeAt(0))}catch(e){}
+ db=new SQL.Database(u);db.run('PRAGMA foreign_keys=ON');if(!u){db.run(SCHEMA);save()}setSeq();render();requestAnimationFrame(tick)})();
+</script></body></html>
